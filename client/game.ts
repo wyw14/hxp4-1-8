@@ -7,6 +7,53 @@ interface HighScoreResponse {
   isNewRecord?: boolean;
 }
 
+interface Achievement {
+  id: string;
+  name: string;
+  description: string;
+  icon: string;
+  unlocked: boolean;
+  unlockedAt?: number;
+}
+
+interface AchievementStats {
+  gamesPlayed: number;
+  bestScore: number;
+  lastThreeScores: number[];
+  hasBrokenRecord: boolean;
+}
+
+const ACHIEVEMENTS: Achievement[] = [
+  {
+    id: 'first_game',
+    name: '初次尝试',
+    description: '首次完成一局游戏',
+    icon: '🎮',
+    unlocked: false,
+  },
+  {
+    id: 'level_5',
+    name: '记忆达人',
+    description: '达到第5关',
+    icon: '🧠',
+    unlocked: false,
+  },
+  {
+    id: 'three_improvements',
+    name: '节节攀升',
+    description: '连续三局成绩进步',
+    icon: '📈',
+    unlocked: false,
+  },
+  {
+    id: 'first_record',
+    name: '纪录缔造者',
+    description: '首次打破最高纪录',
+    icon: '🏆',
+    unlocked: false,
+  },
+];
+
 class ColorMemoryGame {
   private sequence: Color[] = [];
   private playerIndex: number = 0;
@@ -15,11 +62,23 @@ class ColorMemoryGame {
   private level: number = 0;
   private highScore: number = 0;
 
+  private achievements: Achievement[] = [];
+  private achievementStats: AchievementStats = {
+    gamesPlayed: 0,
+    bestScore: 0,
+    lastThreeScores: [],
+    hasBrokenRecord: false,
+  };
+
   private readonly buttons: NodeListOf<HTMLButtonElement>;
   private readonly startBtn: HTMLButtonElement;
   private readonly currentLevelEl: HTMLElement;
   private readonly highScoreEl: HTMLElement;
   private readonly gameStatusEl: HTMLElement;
+  private readonly achievementBadgeEl: HTMLElement;
+  private readonly achievementsBtn: HTMLButtonElement;
+  private readonly achievementsPanel: HTMLElement;
+  private readonly achievementsListEl: HTMLElement;
 
   private readonly lightOnDuration: number = 600;
   private readonly lightOffDuration: number = 300;
@@ -30,12 +89,18 @@ class ColorMemoryGame {
     this.currentLevelEl = document.getElementById('current-level') as HTMLElement;
     this.highScoreEl = document.getElementById('high-score') as HTMLElement;
     this.gameStatusEl = document.getElementById('game-status') as HTMLElement;
+    this.achievementBadgeEl = document.getElementById('achievement-badge') as HTMLElement;
+    this.achievementsBtn = document.getElementById('achievements-btn') as HTMLButtonElement;
+    this.achievementsPanel = document.getElementById('achievements-panel') as HTMLElement;
+    this.achievementsListEl = document.getElementById('achievements-list') as HTMLElement;
 
     this.init();
   }
 
   private async init(): Promise<void> {
+    this.loadAchievements();
     this.setupEventListeners();
+    this.renderAchievementsList();
     await this.fetchHighScore();
   }
 
@@ -48,6 +113,13 @@ class ColorMemoryGame {
         this.handlePlayerInput(color);
       });
     });
+
+    this.achievementsBtn.addEventListener('click', () => this.toggleAchievementsPanel());
+
+    const closeBtn = document.getElementById('close-achievements');
+    if (closeBtn) {
+      closeBtn.addEventListener('click', () => this.toggleAchievementsPanel());
+    }
   }
 
   private async fetchHighScore(): Promise<void> {
@@ -103,6 +175,8 @@ class ColorMemoryGame {
 
     const randomColor = COLORS[Math.floor(Math.random() * COLORS.length)];
     this.sequence.push(randomColor);
+
+    this.checkLevelAchievement(this.level);
 
     this.showStatus(`第 ${this.level} 关 - 记住序列`, 'playing');
     this.showSequence();
@@ -177,9 +251,13 @@ class ColorMemoryGame {
     const finalScore = this.level - 1;
     this.showStatus(`游戏结束！你完成了 ${finalScore} 关`, 'gameover');
 
-    if (finalScore > this.highScore) {
+    const isNewRecord = finalScore > this.highScore;
+    if (isNewRecord) {
       await this.saveHighScore(finalScore);
     }
+
+    this.updateAchievementStats(finalScore, isNewRecord);
+    this.checkGameOverAchievements(finalScore, isNewRecord);
   }
 
   private setButtonsDisabled(disabled: boolean): void {
@@ -198,6 +276,127 @@ class ColorMemoryGame {
 
   private delay(ms: number): Promise<void> {
     return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  private loadAchievements(): void {
+    try {
+      const savedAchievements = localStorage.getItem('colorMemory_achievements');
+      const savedStats = localStorage.getItem('colorMemory_achievementStats');
+
+      if (savedAchievements) {
+        this.achievements = JSON.parse(savedAchievements);
+      } else {
+        this.achievements = JSON.parse(JSON.stringify(ACHIEVEMENTS));
+      }
+
+      if (savedStats) {
+        this.achievementStats = JSON.parse(savedStats);
+      }
+    } catch (error) {
+      console.error('加载成就数据失败:', error);
+      this.achievements = JSON.parse(JSON.stringify(ACHIEVEMENTS));
+    }
+  }
+
+  private saveAchievements(): void {
+    try {
+      localStorage.setItem('colorMemory_achievements', JSON.stringify(this.achievements));
+      localStorage.setItem('colorMemory_achievementStats', JSON.stringify(this.achievementStats));
+    } catch (error) {
+      console.error('保存成就数据失败:', error);
+    }
+  }
+
+  private updateAchievementStats(score: number, isNewRecord: boolean): void {
+    this.achievementStats.gamesPlayed++;
+    if (score > this.achievementStats.bestScore) {
+      this.achievementStats.bestScore = score;
+    }
+
+    this.achievementStats.lastThreeScores.push(score);
+    if (this.achievementStats.lastThreeScores.length > 3) {
+      this.achievementStats.lastThreeScores.shift();
+    }
+
+    if (isNewRecord) {
+      this.achievementStats.hasBrokenRecord = true;
+    }
+
+    this.saveAchievements();
+  }
+
+  private checkLevelAchievement(level: number): void {
+    if (level >= 5) {
+      this.unlockAchievement('level_5');
+    }
+  }
+
+  private checkGameOverAchievements(_score: number, isNewRecord: boolean): void {
+    if (this.achievementStats.gamesPlayed >= 1) {
+      this.unlockAchievement('first_game');
+    }
+
+    if (isNewRecord && !this.achievements.find(a => a.id === 'first_record')?.unlocked) {
+      this.unlockAchievement('first_record');
+    }
+
+    const scores = this.achievementStats.lastThreeScores;
+    if (scores.length === 3 && scores[0] < scores[1] && scores[1] < scores[2]) {
+      this.unlockAchievement('three_improvements');
+    }
+  }
+
+  private unlockAchievement(id: string): void {
+    const achievement = this.achievements.find(a => a.id === id);
+    if (!achievement || achievement.unlocked) return;
+
+    achievement.unlocked = true;
+    achievement.unlockedAt = Date.now();
+    this.saveAchievements();
+    this.showAchievementBadge(achievement);
+    this.renderAchievementsList();
+  }
+
+  private showAchievementBadge(achievement: Achievement): void {
+    const badgeIcon = this.achievementBadgeEl.querySelector('.badge-icon') as HTMLElement;
+    const badgeName = this.achievementBadgeEl.querySelector('.badge-name') as HTMLElement;
+    const badgeDesc = this.achievementBadgeEl.querySelector('.badge-desc') as HTMLElement;
+
+    if (badgeIcon) badgeIcon.textContent = achievement.icon;
+    if (badgeName) badgeName.textContent = achievement.name;
+    if (badgeDesc) badgeDesc.textContent = achievement.description;
+
+    this.achievementBadgeEl.classList.add('show');
+
+    setTimeout(() => {
+      this.achievementBadgeEl.classList.remove('show');
+    }, 3000);
+  }
+
+  private toggleAchievementsPanel(): void {
+    this.achievementsPanel.classList.toggle('show');
+  }
+
+  private renderAchievementsList(): void {
+    if (!this.achievementsListEl) return;
+
+    this.achievementsListEl.innerHTML = '';
+
+    this.achievements.forEach(achievement => {
+      const item = document.createElement('div');
+      item.className = `achievement-item ${achievement.unlocked ? 'unlocked' : 'locked'}`;
+      item.innerHTML = `
+        <div class="achievement-icon">${achievement.icon}</div>
+        <div class="achievement-info">
+          <div class="achievement-name">${achievement.name}</div>
+          <div class="achievement-desc">${achievement.description}</div>
+        </div>
+        <div class="achievement-status">
+          ${achievement.unlocked ? '✓ 已解锁' : '🔒 未解锁'}
+        </div>
+      `;
+      this.achievementsListEl.appendChild(item);
+    });
   }
 }
 

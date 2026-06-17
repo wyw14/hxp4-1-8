@@ -21,6 +21,8 @@
       </div>
     </div>
 
+    <button id="achievements-btn" class="achievements-btn">🏆 成就</button>
+
     <div id="game-status" class="game-status">点击开始按钮开始游戏</div>
 
     <div class="game-board">
@@ -41,6 +43,23 @@
       <p>3. 每过一关，序列增加一个</p>
       <p>4. 按错一次即游戏结束</p>
     </div>
+  </div>
+
+  <div id="achievement-badge" class="achievement-badge">
+    <div class="badge-icon">🏆</div>
+    <div class="badge-content">
+      <div class="badge-title">成就解锁！</div>
+      <div class="badge-name">成就名称</div>
+      <div class="badge-desc">成就描述</div>
+    </div>
+  </div>
+
+  <div id="achievements-panel" class="achievements-panel">
+    <div class="panel-header">
+      <h2>🏆 成就列表</h2>
+      <button id="close-achievements" class="close-btn">✕</button>
+    </div>
+    <div id="achievements-list" class="achievements-list"></div>
   </div>
 
   <script type="module" src="game.ts"></script>
