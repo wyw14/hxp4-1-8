@@ -70,6 +70,9 @@ class ColorMemoryGame {
     hasBrokenRecord: false,
   };
 
+  private achievementBadgeQueue: Achievement[] = [];
+  private isShowingBadge: boolean = false;
+
   private readonly buttons: NodeListOf<HTMLButtonElement>;
   private readonly startBtn: HTMLButtonElement;
   private readonly currentLevelEl: HTMLElement;
@@ -82,6 +85,8 @@ class ColorMemoryGame {
 
   private readonly lightOnDuration: number = 600;
   private readonly lightOffDuration: number = 300;
+  private readonly badgeShowDuration: number = 3000;
+  private readonly badgeHideDuration: number = 500;
 
   constructor() {
     this.buttons = document.querySelectorAll('.color-btn');
@@ -98,10 +103,16 @@ class ColorMemoryGame {
   }
 
   private async init(): Promise<void> {
-    this.loadAchievements();
-    this.setupEventListeners();
-    this.renderAchievementsList();
-    await this.fetchHighScore();
+    try {
+      this.loadAchievements();
+      this.setupEventListeners();
+      this.renderAchievementsList();
+      this.updateAchievementsBtnCount();
+      await this.fetchHighScore();
+    } catch (error) {
+      console.error('初始化失败:', error);
+      this.showStatus('⚠️ 初始化异常，请刷新页面重试', 'gameover');
+    }
   }
 
   private setupEventListeners(): void {
@@ -125,15 +136,19 @@ class ColorMemoryGame {
   private async fetchHighScore(): Promise<void> {
     try {
       const response = await fetch('/api/highscore');
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
       const data = await response.json() as HighScoreResponse;
       this.highScore = data.highScore;
       this.highScoreEl.textContent = this.highScore.toString();
     } catch (error) {
       console.error('获取最高分失败:', error);
+      this.showStatus('⚠️ 获取最高分失败', '');
     }
   }
 
-  private async saveHighScore(score: number): Promise<void> {
+  private async saveHighScore(score: number): Promise<boolean> {
     try {
       const response = await fetch('/api/highscore', {
         method: 'POST',
@@ -142,6 +157,11 @@ class ColorMemoryGame {
         },
         body: JSON.stringify({ score }),
       });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
       const data = await response.json() as HighScoreResponse;
       this.highScore = data.highScore;
       this.highScoreEl.textContent = this.highScore.toString();
@@ -149,8 +169,12 @@ class ColorMemoryGame {
       if (data.isNewRecord) {
         this.showStatus('🎉 新纪录！', 'success');
       }
+
+      return data.isNewRecord === true;
     } catch (error) {
       console.error('保存最高分失败:', error);
+      this.showStatus('⚠️ 保存分数失败', '');
+      return false;
     }
   }
 
@@ -160,10 +184,10 @@ class ColorMemoryGame {
     this.level = 0;
     this.isPlaying = true;
     this.currentLevelEl.textContent = '0';
-    
+
     this.setButtonsDisabled(true);
     this.startBtn.disabled = true;
-    
+
     this.showStatus('游戏开始！', 'playing');
     this.nextRound();
   }
@@ -191,7 +215,7 @@ class ColorMemoryGame {
     for (let i = 0; i < this.sequence.length; i++) {
       const color = this.sequence[i];
       await this.lightUpButton(color);
-      
+
       if (i < this.sequence.length - 1) {
         await this.delay(this.lightOffDuration);
       }
@@ -251,13 +275,15 @@ class ColorMemoryGame {
     const finalScore = this.level - 1;
     this.showStatus(`游戏结束！你完成了 ${finalScore} 关`, 'gameover');
 
-    const isNewRecord = finalScore > this.highScore;
-    if (isNewRecord) {
-      await this.saveHighScore(finalScore);
+    const isPotentialNewRecord = finalScore > this.highScore;
+    let isConfirmedNewRecord = false;
+
+    if (isPotentialNewRecord) {
+      isConfirmedNewRecord = await this.saveHighScore(finalScore);
     }
 
-    this.updateAchievementStats(finalScore, isNewRecord);
-    this.checkGameOverAchievements(finalScore, isNewRecord);
+    this.updateAchievementStats(finalScore, isConfirmedNewRecord);
+    this.checkGameOverAchievements(finalScore, isConfirmedNewRecord);
   }
 
   private setButtonsDisabled(disabled: boolean): void {
@@ -267,6 +293,7 @@ class ColorMemoryGame {
   }
 
   private showStatus(message: string, type: 'playing' | 'gameover' | 'success' | '' = ''): void {
+    if (!this.gameStatusEl) return;
     this.gameStatusEl.textContent = message;
     this.gameStatusEl.className = 'game-status';
     if (type) {
@@ -284,17 +311,34 @@ class ColorMemoryGame {
       const savedStats = localStorage.getItem('colorMemory_achievementStats');
 
       if (savedAchievements) {
-        this.achievements = JSON.parse(savedAchievements);
+        const parsed = JSON.parse(savedAchievements);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          this.achievements = parsed;
+        } else {
+          this.achievements = JSON.parse(JSON.stringify(ACHIEVEMENTS));
+        }
       } else {
         this.achievements = JSON.parse(JSON.stringify(ACHIEVEMENTS));
       }
 
       if (savedStats) {
-        this.achievementStats = JSON.parse(savedStats);
+        const parsedStats = JSON.parse(savedStats);
+        this.achievementStats = {
+          gamesPlayed: typeof parsedStats.gamesPlayed === 'number' ? parsedStats.gamesPlayed : 0,
+          bestScore: typeof parsedStats.bestScore === 'number' ? parsedStats.bestScore : 0,
+          lastThreeScores: Array.isArray(parsedStats.lastThreeScores) ? parsedStats.lastThreeScores.slice(0, 3) : [],
+          hasBrokenRecord: typeof parsedStats.hasBrokenRecord === 'boolean' ? parsedStats.hasBrokenRecord : false,
+        };
       }
     } catch (error) {
       console.error('加载成就数据失败:', error);
       this.achievements = JSON.parse(JSON.stringify(ACHIEVEMENTS));
+      this.achievementStats = {
+        gamesPlayed: 0,
+        bestScore: 0,
+        lastThreeScores: [],
+        hasBrokenRecord: false,
+      };
     }
   }
 
@@ -304,6 +348,7 @@ class ColorMemoryGame {
       localStorage.setItem('colorMemory_achievementStats', JSON.stringify(this.achievementStats));
     } catch (error) {
       console.error('保存成就数据失败:', error);
+      this.showStatus('⚠️ 成就保存失败', '');
     }
   }
 
@@ -336,7 +381,7 @@ class ColorMemoryGame {
       this.unlockAchievement('first_game');
     }
 
-    if (isNewRecord && !this.achievements.find(a => a.id === 'first_record')?.unlocked) {
+    if (isNewRecord) {
       this.unlockAchievement('first_record');
     }
 
@@ -353,11 +398,39 @@ class ColorMemoryGame {
     achievement.unlocked = true;
     achievement.unlockedAt = Date.now();
     this.saveAchievements();
-    this.showAchievementBadge(achievement);
+
+    this.enqueueAchievementBadge(achievement);
     this.renderAchievementsList();
+    this.updateAchievementsBtnCount();
   }
 
-  private showAchievementBadge(achievement: Achievement): void {
+  private enqueueAchievementBadge(achievement: Achievement): void {
+    this.achievementBadgeQueue.push(achievement);
+    if (!this.isShowingBadge) {
+      this.processBadgeQueue();
+    }
+  }
+
+  private async processBadgeQueue(): Promise<void> {
+    if (this.achievementBadgeQueue.length === 0) {
+      this.isShowingBadge = false;
+      return;
+    }
+
+    this.isShowingBadge = true;
+    const achievement = this.achievementBadgeQueue.shift()!;
+
+    this.displayAchievementBadge(achievement);
+    await this.delay(this.badgeShowDuration);
+    this.hideAchievementBadge();
+    await this.delay(this.badgeHideDuration);
+
+    this.processBadgeQueue();
+  }
+
+  private displayAchievementBadge(achievement: Achievement): void {
+    if (!this.achievementBadgeEl) return;
+
     const badgeIcon = this.achievementBadgeEl.querySelector('.badge-icon') as HTMLElement;
     const badgeName = this.achievementBadgeEl.querySelector('.badge-name') as HTMLElement;
     const badgeDesc = this.achievementBadgeEl.querySelector('.badge-desc') as HTMLElement;
@@ -367,14 +440,22 @@ class ColorMemoryGame {
     if (badgeDesc) badgeDesc.textContent = achievement.description;
 
     this.achievementBadgeEl.classList.add('show');
+  }
 
-    setTimeout(() => {
-      this.achievementBadgeEl.classList.remove('show');
-    }, 3000);
+  private hideAchievementBadge(): void {
+    if (!this.achievementBadgeEl) return;
+    this.achievementBadgeEl.classList.remove('show');
   }
 
   private toggleAchievementsPanel(): void {
+    if (!this.achievementsPanel) return;
     this.achievementsPanel.classList.toggle('show');
+  }
+
+  private updateAchievementsBtnCount(): void {
+    if (!this.achievementsBtn) return;
+    const unlockedCount = this.achievements.filter(a => a.unlocked).length;
+    this.achievementsBtn.textContent = `🏆 成就 ${unlockedCount}/${this.achievements.length}`;
   }
 
   private renderAchievementsList(): void {
@@ -385,11 +466,19 @@ class ColorMemoryGame {
     this.achievements.forEach(achievement => {
       const item = document.createElement('div');
       item.className = `achievement-item ${achievement.unlocked ? 'unlocked' : 'locked'}`;
+
+      let dateText = '';
+      if (achievement.unlocked && achievement.unlockedAt) {
+        const date = new Date(achievement.unlockedAt);
+        dateText = `<div class="achievement-date">${date.toLocaleDateString('zh-CN')}</div>`;
+      }
+
       item.innerHTML = `
         <div class="achievement-icon">${achievement.icon}</div>
         <div class="achievement-info">
           <div class="achievement-name">${achievement.name}</div>
           <div class="achievement-desc">${achievement.description}</div>
+          ${dateText}
         </div>
         <div class="achievement-status">
           ${achievement.unlocked ? '✓ 已解锁' : '🔒 未解锁'}
